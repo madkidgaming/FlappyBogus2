@@ -227,6 +227,92 @@
         #btn-skip { background: transparent; color: #b0b0b0; border: 2px solid #333; }
         #btn-skip:hover { background: #1a1a1a; }
 
+        /* ─── Overlay Akt ──────────────────────────────────── */
+        #act-overlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background: #08080a;
+            z-index: 15;
+            pointer-events: none;
+            opacity: 0;
+        }
+        #act-overlay.show {
+            animation: actReveal 1.8s ease forwards;
+        }
+        @keyframes actReveal {
+            0%   { opacity: 0; }
+            15%  { opacity: 1; }
+            70%  { opacity: 1; }
+            100% { opacity: 0; }
+        }
+        #act-number {
+            font-family: 'megascope-variable', sans-serif;
+            font-variation-settings: "wght" 700, "SCOP" 0;
+            font-size: 11px;
+            letter-spacing: 6px;
+            color: #555;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+        }
+        #act-title {
+            font-family: 'megascope-variable', sans-serif;
+            font-variation-settings: "wght" 700, "SCOP" 0;
+            font-size: 52px;
+            color: #d9d2c0;
+            letter-spacing: 2px;
+            line-height: 1;
+        }
+        #act-divider {
+            width: 40px;
+            height: 2px;
+            background: #d85a1e;
+            margin: 14px 0;
+        }
+        #act-subtitle {
+            font-family: 'megascope-variable', sans-serif;
+            font-variation-settings: "wght" 700, "SCOP" 0;
+            font-size: 11px;
+            letter-spacing: 4px;
+            color: #555;
+            text-transform: uppercase;
+        }
+
+        /* ─── Modal – personal best i ranking ──────────────── */
+        #modal-meta {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            margin-bottom: 16px;
+            font-family: 'megascope-variable', sans-serif;
+            font-variation-settings: "wght" 700, "SCOP" 0;
+        }
+        .modal-meta-item {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 3px;
+        }
+        .modal-meta-label {
+            font-size: 10px;
+            letter-spacing: 3px;
+            color: #555;
+            text-transform: uppercase;
+        }
+        .modal-meta-value {
+            font-size: 20px;
+            color: #d9d2c0;
+        }
+        .modal-meta-value.better {
+            color: #d85a1e;
+        }
+        .modal-meta-value.rank-top {
+            color: #d85a1e;
+        }
+
         /* ─── Responsywność ─────────────────────────────────── */
         @media (max-width: 1050px) {
             #main-container {
@@ -253,10 +339,28 @@
             </svg>
         </button>
 
+        <!-- Overlay Akt -->
+        <div id="act-overlay">
+            <div id="act-number">66. Kaliskie Spotkania Teatralne</div>
+            <div id="act-title">AKT I</div>
+            <div id="act-divider"></div>
+            <div id="act-subtitle">scena otwarta</div>
+        </div>
+
         <div id="score-modal">
             <h2>KURTYNA OPADŁA</h2>
             <p class="modal-label">Twój wynik</p>
             <span id="final-score-text">0</span>
+            <div id="modal-meta">
+                <div class="modal-meta-item" id="meta-personal" style="display:none">
+                    <span class="modal-meta-label">poprzednio</span>
+                    <span class="modal-meta-value" id="meta-personal-value">—</span>
+                </div>
+                <div class="modal-meta-item" id="meta-rank" style="display:none">
+                    <span class="modal-meta-label">miejsce</span>
+                    <span class="modal-meta-value" id="meta-rank-value">—</span>
+                </div>
+            </div>
             <input type="text" id="player-name" placeholder="Twoje imię / Nick" maxlength="15" autocomplete="off" spellcheck="false">
             <button id="btn-submit">ZAPISZ WYNIK</button>
             <button id="btn-skip">POMIŃ I ZAGRAJ PONOWNIE</button>
@@ -333,7 +437,6 @@ function renderScores(data) {
 }
 
 async function fetchScores() {
-    showLoading();
     try {
         const res = await fetch(
             `${SUPA_URL}/rest/v1/scores?select=name,score&order=score.desc&limit=20`,
@@ -346,6 +449,7 @@ async function fetchScores() {
         );
         if (!res.ok) throw new Error(res.status);
         const data = await res.json();
+        cachedScores = data || [];
         renderScores(data);
     } catch (e) {
         showError();
@@ -434,7 +538,49 @@ const BASE_SPAWN_RATE = 140;
 const MAX_SPEED       = 4.2;
 const MIN_GAP         = 150;
 
-// ─── Hasło ────────────────────────────────────────────────────────
+// ─── Akty ─────────────────────────────────────────────────────────
+const ACTS = [
+    { speed: 0,   num: 'AKT I',   subtitle: 'scena otwarta' },
+    { speed: 2.9, num: 'AKT II',  subtitle: 'napięcie rośnie' },
+    { speed: 3.6, num: 'AKT III', subtitle: 'finał' },
+];
+let currentAct = 0;
+let actOverlayEl  = null;
+let actTitleEl    = null;
+let actSubtitleEl = null;
+
+function initActUI() {
+    actOverlayEl  = document.getElementById('act-overlay');
+    actTitleEl    = document.getElementById('act-title');
+    actSubtitleEl = document.getElementById('act-subtitle');
+}
+
+function showActOverlay(act) {
+    actTitleEl.innerText    = act.num;
+    actSubtitleEl.innerText = act.subtitle;
+    actOverlayEl.classList.remove('show');
+    void actOverlayEl.offsetWidth; // reflow wymusza restart animacji
+    actOverlayEl.classList.add('show');
+}
+
+// ─── Personal Best (localStorage) ────────────────────────────────
+function getPersonalBest() {
+    return parseInt(localStorage.getItem('kst_pb') || '0', 10);
+}
+function setPersonalBest(val) {
+    localStorage.setItem('kst_pb', String(val));
+}
+
+// ─── Ranking po zapisaniu ─────────────────────────────────────────
+let cachedScores = [];
+
+function computeRank(myScore) {
+    // liczymy ile osób ma lepszy wynik (każda instancja osobno)
+    const better = cachedScores.filter(r => r.score > myScore).length;
+    return better + 1;
+}
+
+
 const TARGET_PHRASE = "KALISKIE SPOTKANIA TEATRALNE";
 const PHRASE_LEN    = TARGET_PHRASE.replace(/\s/g, '').length;
 
@@ -678,6 +824,15 @@ class Obstacle {
             currentObstacleSpeed = Math.min(MAX_SPEED, currentObstacleSpeed + 0.04);
             currentGapSize       = Math.max(MIN_GAP,   currentGapSize - 1.2);
             currentSpawnRate     = BASE_SPAWN_RATE * (BASE_SPEED / currentObstacleSpeed);
+
+            // ── Sprawdź czy wchodzimy w nowy akt ─────────────────
+            for (let a = currentAct + 1; a < ACTS.length; a++) {
+                if (currentObstacleSpeed >= ACTS[a].speed) {
+                    currentAct = a;
+                    showActOverlay(ACTS[a]);
+                    break;
+                }
+            }
         }
     }
 }
@@ -766,6 +921,7 @@ function initGame() {
 
     collectedIndices = new Set();
     phraseCompleted  = false;
+    currentAct       = 0;
 
     scoreModal.classList.remove('visible');
     btnSubmit.innerText = 'ZAPISZ WYNIK';
@@ -1063,6 +1219,32 @@ function triggerGameOver() {
         if (gameState !== 'GAMEOVER') return; 
         if (score > 0) {
             finalScoreText.innerText = score;
+
+            // ── Personal Best ──────────────────────────────────
+            const pb = getPersonalBest();
+            const metaPersonal = document.getElementById('meta-personal');
+            const metaPersonalVal = document.getElementById('meta-personal-value');
+            if (pb > 0) {
+                metaPersonal.style.display = 'flex';
+                metaPersonalVal.innerText = pb;
+                metaPersonalVal.className = 'modal-meta-value' + (score > pb ? ' better' : '');
+            } else {
+                metaPersonal.style.display = 'none';
+            }
+            if (score > pb) setPersonalBest(score);
+
+            // ── Ranking (z cache) ──────────────────────────────
+            const metaRank = document.getElementById('meta-rank');
+            const metaRankVal = document.getElementById('meta-rank-value');
+            if (cachedScores.length > 0) {
+                const rank = computeRank(score);
+                metaRank.style.display = 'flex';
+                metaRankVal.innerText = rank + '.';
+                metaRankVal.className = 'modal-meta-value' + (rank <= 3 ? ' rank-top' : '');
+            } else {
+                metaRank.style.display = 'none';
+            }
+
             scoreModal.classList.add('visible');
             playerNameInput.focus();
         }
@@ -1086,8 +1268,18 @@ function submitScore() {
     supaPostScore(name, score)
     .then(() => {
         btnSubmit.innerText = '✓ ZAPISANO!';
-        fetchScores(); // Natychmiastowe odświeżenie wyników po wysłaniu!
-        setTimeout(() => resetFromModal(), 1000);
+        fetchScores().then(() => {
+            // Aktualizuj ranking po odświeżeniu
+            const metaRank = document.getElementById('meta-rank');
+            const metaRankVal = document.getElementById('meta-rank-value');
+            if (cachedScores.length > 0) {
+                const rank = computeRank(score - 1); // score już jest w bazie, liczymy lepszych
+                metaRank.style.display = 'flex';
+                metaRankVal.innerText = rank + '.';
+                metaRankVal.className = 'modal-meta-value' + (rank <= 3 ? ' rank-top' : '');
+            }
+        });
+        setTimeout(() => resetFromModal(), 1800);
     })
     .catch(() => {
         btnSubmit.innerText = 'BŁĄD – SPRÓBUJ PONOWNIE';
@@ -1268,6 +1460,7 @@ function handleInput(e) {
         player.startX   = player.x;
         player.velocity = 0;
         player.jump();
+        showActOverlay(ACTS[0]);
     } else if (gameState === 'PLAYING' || gameState === 'TRANSITION') {
         player.jump();
     } else if (gameState === 'GAMEOVER') {
@@ -1282,6 +1475,7 @@ canvas.addEventListener('mousedown', handleInput);
 canvas.addEventListener('touchstart', handleInput, { passive: false });
 
 // ─── Start ────────────────────────────────────────────────────────
+initActUI();
 initGame();
 document.fonts.ready.then(() => {
     requestAnimationFrame(loop);
