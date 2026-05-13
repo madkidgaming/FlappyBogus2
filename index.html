@@ -1,0 +1,1038 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>66. KST - Flappy Boguś 2</title>
+    <link rel="stylesheet" href="https://use.typekit.net/iad7nis.css">
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: #08080a;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            font-family: 'Helvetica', 'Arial', sans-serif;
+            color: #d9d2c0;
+            overflow: hidden;
+            touch-action: none;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        #game-wrapper {
+            position: relative;
+            width: 100vw;
+            max-width: 400px;
+            height: 100vh;
+            max-height: 700px;
+            border: 2px solid #d9d2c0;
+            background-color: #d85a1e;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.8);
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0; left: 0;
+            z-index: 1;
+        }
+
+        /* ─── Modal wyników ─────────────────────────────────── */
+        #score-modal {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.88);
+            width: 85%;
+            background: #08080a;
+            border: 3px solid #d85a1e;
+            border-radius: 8px;
+            padding: 22px 20px;
+            text-align: center;
+            z-index: 10;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.175,0.885,0.32,1.275);
+            box-shadow: 0 10px 40px rgba(0,0,0,0.7);
+        }
+        #score-modal.visible {
+            opacity: 1;
+            pointer-events: auto;
+            transform: translate(-50%, -50%) scale(1);
+        }
+        #score-modal h2 { color: #d85a1e; margin-bottom: 8px; font-size: 24px; letter-spacing: 1px; }
+        #score-modal .modal-label { margin-bottom: 4px; font-size: 13px; color: #b0b0b0; }
+        #score-modal #final-score-text { color: #d9d2c0; font-size: 48px; font-weight: 900; display: block; margin-bottom: 16px; line-height: 1; }
+        #score-modal input {
+            width: 100%; padding: 12px; margin-bottom: 12px;
+            background: #15151a; border: 2px solid #b0b0b0; color: #d9d2c0;
+            font-size: 16px; text-align: center; font-weight: bold;
+            border-radius: 4px; outline: none;
+        }
+        #score-modal input:focus { border-color: #d85a1e; }
+        #score-modal input.error { border-color: #e03030; }
+        #score-modal button {
+            width: 100%; padding: 13px; margin-bottom: 8px;
+            font-size: 15px; font-weight: 900; border: none;
+            border-radius: 4px; cursor: pointer; letter-spacing: 1px;
+            transition: background 0.15s, transform 0.1s;
+        }
+        #score-modal button:active { transform: scale(0.97); }
+        #btn-submit { background: #d85a1e; color: #08080a; }
+        #btn-submit:hover { background: #e86a2e; }
+        #btn-submit:disabled { background: #7a3010; cursor: default; }
+        #btn-skip { background: transparent; color: #b0b0b0; border: 2px solid #333; }
+        #btn-skip:hover { background: #1a1a1a; }
+    </style>
+</head>
+<body>
+
+<div id="game-wrapper">
+    <canvas id="gameCanvas" width="400" height="700"></canvas>
+
+    <div id="score-modal">
+        <h2>KURTYNA OPADŁA</h2>
+        <p class="modal-label">Twój wynik</p>
+        <span id="final-score-text">0</span>
+        <input type="text" id="player-name" placeholder="Twoje imię / Nick" maxlength="15" autocomplete="off" spellcheck="false">
+        <button id="btn-submit">ZAPISZ WYNIK</button>
+        <button id="btn-skip">POMIŃ I ZAGRAJ PONOWNIE</button>
+    </div>
+</div>
+
+<script>
+// ─── Konfiguracja ─────────────────────────────────────────────────
+const SUPA_URL = 'https://nkfctpnuqgpqvsgvmdlc.supabase.co';
+const SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5rZmN0cG51cWdwcXZzZ3ZtZGxjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg2NTkxNzksImV4cCI6MjA5NDIzNTE3OX0.f8ZPV4QzR90kXRJlImf0C7i5wR_JFWXA_sFxxGNjqps';
+
+async function supaPostScore(name, scoreVal) {
+    const res = await fetch(`${SUPA_URL}/rest/v1/scores`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'apikey': SUPA_KEY,
+            'Authorization': `Bearer ${SUPA_KEY}`,
+            'Prefer': 'return=minimal'
+        },
+        body: JSON.stringify({ name, score: scoreVal })
+    });
+    if (!res.ok) throw new Error(res.status);
+}
+
+// ─── Canvas ───────────────────────────────────────────────────────
+const canvas = document.getElementById('gameCanvas');
+const ctx    = canvas.getContext('2d');
+const CW     = canvas.width;   // 400
+const CH     = canvas.height;  // 700
+const FLOOR_Y = CH - 40;
+
+// ─── Kolory ───────────────────────────────────────────────────────
+const C_ORANGE = '#d85a1e';
+const C_DARK   = '#08080a';
+const C_BEIGE  = '#d9d2c0';
+const C_GRAY   = '#b0b0b0';
+
+// ─── Font helper ──────────────────────────────────────────────────
+// Megascope Variable – ustawienia osi z Adobe Fonts
+// wght 700 = bold, SCOP 0 = domyślny scope (można bawić się 0–100)
+function setFont(size, weight = 700) {
+    ctx.font = `${weight} ${size}px megascope-variable, sans-serif`;
+    // font-variation-settings nie działa bezpośrednio w ctx.font,
+    // ale canvas dziedziczy je z elementu nadrzędnego – ustawiamy przez CSS trick
+}
+
+// Wymuszamy variation settings na canvasie przez styl (canvas dziedziczy CSS)
+canvas.style.fontVariationSettings = '"wght" 700, "SCOP" 0';
+const GRAVITY  = 0.25;
+const JUMP_VEL = -5.5;
+const TERM_VEL = 12;
+
+// ─── Wymiary przeszkód ────────────────────────────────────────────
+const PIPE_W = 76;
+const PIPE_H = 746;
+
+// ─── Trudność ─────────────────────────────────────────────────────
+const BASE_SPEED      = 2.2;
+const BASE_GAP        = 240;
+const BASE_SPAWN_RATE = 140;
+const MAX_SPEED       = 4.2;
+const MIN_GAP         = 150;
+
+// ─── Hasło ────────────────────────────────────────────────────────
+const TARGET_PHRASE = "KALISKIE SPOTKANIA TEATRALNE";
+const PHRASE_LEN    = TARGET_PHRASE.replace(/\s/g, '').length; // tylko litery
+
+// ─── Przejście ────────────────────────────────────────────────────
+const TRANSITION_FRAMES = 90;
+
+// ─── Stan gry ─────────────────────────────────────────────────────
+let gameState;
+let frames;
+let score;
+let highScore = 0;
+let bgX, floorX;
+let transitionTimer;
+let spawnTimer;
+let gameOverTime;
+let isSubmittingScore;
+
+let currentObstacleSpeed;
+let currentGapSize;
+let currentSpawnRate;
+
+let collectedIndices;   // Set<number> – BUG FIX: Set zamiast Array
+let phraseCompleted;
+
+// ─── Listy obiektów ───────────────────────────────────────────────
+let player;
+let obstacles          = [];
+let powerups           = [];
+let particles          = [];
+let letterCollectAnims = [];
+
+// ─── FPS-niezależny czas ──────────────────────────────────────────
+let lastTimestamp = 0;
+let dt = 1;
+
+// ─── Zasoby graficzne ─────────────────────────────────────────────
+const obstacleImg = new Image(); obstacleImg.src = 'assets/pipe.png';
+const bgImg       = new Image(); bgImg.src       = 'assets/background.png';
+const playerImg   = new Image(); playerImg.src   = 'assets/bogus.png';
+
+// ─── DOM ──────────────────────────────────────────────────────────
+const scoreModal      = document.getElementById('score-modal');
+const finalScoreText  = document.getElementById('final-score-text');
+const playerNameInput = document.getElementById('player-name');
+const btnSubmit       = document.getElementById('btn-submit');
+const btnSkip         = document.getElementById('btn-skip');
+
+// ═════════════════════════════════════════════════════════════════
+//  PARTICLES
+// ═════════════════════════════════════════════════════════════════
+function spawnParticles(x, y, color, count = 10, isExplosion = false) {
+    for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = isExplosion ? (2 + Math.random() * 5) : (1 + Math.random() * 3);
+        particles.push({
+            x, y,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed,
+            alpha: 1,
+            size: 3 + Math.random() * 4,
+            color,
+            decay: 0.015 + Math.random() * 0.025
+        });
+    }
+}
+
+function updateParticles() {
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        p.x  += p.vx * dt;
+        p.vy += 0.05 * dt;
+        p.y  += p.vy * dt;
+        p.alpha -= p.decay * dt;
+        p.size = Math.max(0, p.size - 0.05 * dt);
+        if (p.alpha <= 0 || p.size <= 0) particles.splice(i, 1);
+    }
+}
+
+function drawParticles() {
+    ctx.save();
+    for (const p of particles) {
+        ctx.globalAlpha = Math.max(0, p.alpha);
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  ANIMACJE LITER
+// ═════════════════════════════════════════════════════════════════
+function updateLetterAnims() {
+    for (let i = letterCollectAnims.length - 1; i >= 0; i--) {
+        const a = letterCollectAnims[i];
+        a.y  += a.vy * dt;
+        a.vy *= 0.94;
+        a.alpha -= 0.018 * dt;
+        if (a.alpha <= 0) letterCollectAnims.splice(i, 1);
+    }
+}
+
+function drawLetterAnims() {
+    ctx.save();
+    ctx.font = 'bold 22px megascope-variable, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = C_DARK;
+    ctx.shadowBlur = 4;
+    for (const a of letterCollectAnims) {
+        ctx.globalAlpha = Math.max(0, a.alpha);
+        ctx.fillStyle = C_BEIGE;
+        ctx.fillText('+' + a.letter, a.x, a.y);
+    }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.restore();
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  KLASA GRACZA
+// ═════════════════════════════════════════════════════════════════
+class Player {
+    constructor() {
+        this.x        = CW / 2;
+        this.baseY    = CH / 2 - 60;
+        this.y        = this.baseY;
+        this.startX   = this.x;
+        this.size     = 38;
+        this.velocity = 0;
+        this.rotation = 0;
+        this.invincibilityTimer = 0;
+        this.isDead   = false;
+        this.jumpFlash = 0;
+    }
+
+    draw() {
+        ctx.save();
+        ctx.translate(this.x, this.y);
+
+        // Płynna rotacja
+        const targetRot = Math.min(Math.PI / 4, Math.max(-Math.PI / 4, this.velocity * 0.1));
+        this.rotation  += (targetRot - this.rotation) * 0.2;
+        ctx.rotate(this.rotation);
+
+        // Tarcza
+        if (this.invincibilityTimer > 0) {
+            const pulse = 0.5 + 0.5 * Math.sin(frames * 0.15);
+            ctx.save();
+            ctx.strokeStyle = `rgba(217,210,192,${0.3 + pulse * 0.5})`;
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(0, 0, this.size / 2 + 8 + pulse * 3, frames * 0.05, Math.PI * 2 + frames * 0.05);
+            ctx.setLineDash([10, 5]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.restore();
+        }
+
+        if (playerImg.complete && playerImg.naturalWidth !== 0) {
+            ctx.globalAlpha = this.isDead ? 0.45 : 1;
+            ctx.drawImage(playerImg, -this.size / 2, -this.size / 2, this.size, this.size);
+        } else {
+            ctx.fillStyle = this.isDead ? '#444' : C_GRAY;
+            ctx.fillRect(-this.size / 2, -this.size / 2, this.size, this.size);
+            ctx.strokeStyle = C_DARK; ctx.lineWidth = 2;
+            ctx.strokeRect(-this.size / 2, -this.size / 2, this.size, this.size);
+        }
+        ctx.restore();
+    }
+
+    update() {
+        this.velocity += GRAVITY * dt;
+        if (this.velocity > TERM_VEL) this.velocity = TERM_VEL;
+        this.y += this.velocity * dt;
+
+        if (this.invincibilityTimer > 0) this.invincibilityTimer -= dt;
+        if (this.jumpFlash > 0)          this.jumpFlash -= dt;
+
+        // Sufit – odbicie w dół
+        if (this.y - this.size / 2 <= 0) {
+            this.y = this.size / 2;
+            this.velocity = 1;
+        }
+        // Podłoga – game over
+        if (this.y + this.size / 2 >= FLOOR_Y) {
+            this.y = FLOOR_Y - this.size / 2;
+            triggerGameOver();
+        }
+    }
+
+    // Płynny dryf na menu startowym – BEZ grawitacji, BEZ rur
+    driftUpdate() {
+        this.y        = this.baseY + Math.sin(frames * 0.038) * 22;
+        this.rotation = Math.sin(frames * 0.038) * 0.15;
+        this.velocity = 0; // zerujemy żeby jump nie był "naładowany"
+    }
+
+    jump() {
+        this.velocity = JUMP_VEL;
+        this.jumpFlash = 5;
+        spawnParticles(this.x, this.y + this.size / 2, C_BEIGE, 4);
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  KLASA PRZESZKODY
+// ═════════════════════════════════════════════════════════════════
+class Obstacle {
+    constructor() {
+        this.x = CW + 20;
+        const MIN_TOP   = 60;
+        const available = FLOOR_Y - currentGapSize;
+        this.topHeight  = Math.random() * (available - MIN_TOP * 2) + MIN_TOP;
+        this.bottomY    = this.topHeight + currentGapSize;
+        this.passed     = false;
+    }
+
+    draw() {
+        if (obstacleImg.complete && obstacleImg.naturalWidth !== 0) {
+            ctx.drawImage(obstacleImg, this.x, this.topHeight - PIPE_H, PIPE_W, PIPE_H);
+            ctx.drawImage(obstacleImg, this.x, this.bottomY,            PIPE_W, PIPE_H);
+        } else {
+            ctx.fillStyle = '#1a1a1a';
+            ctx.fillRect(this.x, 0, PIPE_W, this.topHeight);
+            ctx.fillRect(this.x, this.bottomY, PIPE_W, FLOOR_Y - this.bottomY);
+            ctx.strokeStyle = C_GRAY; ctx.lineWidth = 2;
+            ctx.strokeRect(this.x, 0, PIPE_W, this.topHeight);
+            ctx.strokeRect(this.x, this.bottomY, PIPE_W, FLOOR_Y - this.bottomY);
+        }
+    }
+
+    update() {
+        this.x -= currentObstacleSpeed * dt;
+
+        if (!this.passed && player.x > this.x + PIPE_W) {
+            score++;
+            this.passed = true;
+            spawnParticles(player.x + 20, player.y, C_ORANGE, 8);
+
+            // Gradacja trudności
+            currentObstacleSpeed = Math.min(MAX_SPEED, currentObstacleSpeed + 0.04);
+            currentGapSize       = Math.max(MIN_GAP,   currentGapSize - 1.2);
+            // Przeliczamy spawn rate by utrzymać wizualny odstęp
+            currentSpawnRate     = BASE_SPAWN_RATE * (BASE_SPEED / currentObstacleSpeed);
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  KLASA POWERUPA
+// ═════════════════════════════════════════════════════════════════
+class Powerup {
+    constructor(x, y, type, letter = '', letterIndex = -1) {
+        this.x           = x;
+        this.y           = y;
+        this.size        = 24;
+        this.type        = type;
+        this.letter      = letter;
+        this.letterIndex = letterIndex;
+        this.markedForDeletion = false;
+        this.bobOffset   = Math.random() * Math.PI * 2;
+        this.scale       = 0;
+    }
+
+    draw() {
+        this.scale = Math.min(1, this.scale + 0.05 * dt);
+        ctx.save();
+        const bobY = this.y + Math.sin(frames * 0.08 + this.bobOffset) * 6;
+        ctx.translate(this.x, bobY);
+        ctx.scale(this.scale, this.scale);
+
+        if (this.type === 1) {
+            ctx.fillStyle = C_BEIGE;
+            ctx.beginPath();
+            ctx.moveTo(0, -this.size / 2);
+            ctx.lineTo(this.size / 2, this.size / 2);
+            ctx.lineTo(-this.size / 2, this.size / 2);
+            ctx.closePath();
+            ctx.fill();
+        } else if (this.type === 2) {
+            ctx.fillStyle = C_DARK;
+            ctx.fillRect(-this.size / 2, -this.size / 2, this.size, this.size);
+            ctx.strokeStyle = C_BEIGE; ctx.lineWidth = 2;
+            ctx.strokeRect(-this.size / 2, -this.size / 2, this.size, this.size);
+            ctx.fillStyle = C_BEIGE;
+            ctx.font = 'bold 15px megascope-variable, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText('⬡', 0, 1);
+        } else if (this.type === 3) {
+            ctx.fillStyle = C_DARK;
+            ctx.fillRect(-this.size / 2, -this.size / 2, this.size, this.size);
+            ctx.strokeStyle = C_ORANGE; ctx.lineWidth = 2;
+            ctx.strokeRect(-this.size / 2, -this.size / 2, this.size, this.size);
+            ctx.fillStyle = C_ORANGE;
+            ctx.font = 'bold 16px megascope-variable, sans-serif';
+            ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+            ctx.fillText(this.letter, 0, 2);
+        }
+        ctx.restore();
+    }
+
+    update() {
+        this.x -= currentObstacleSpeed * dt;
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  INICJALIZACJA / RESTART
+// ═════════════════════════════════════════════════════════════════
+function initGame() {
+    player             = new Player();
+    obstacles          = [];
+    powerups           = [];
+    particles          = [];
+    letterCollectAnims = [];
+
+    score             = 0;
+    frames            = 0;
+    bgX               = 0;
+    floorX            = 0;
+    transitionTimer   = 0;
+    gameOverTime      = 0;
+    isSubmittingScore = false;
+
+    // BUG FIX: pełny reset trudności
+    currentObstacleSpeed = BASE_SPEED;
+    currentGapSize       = BASE_GAP;
+    currentSpawnRate     = BASE_SPAWN_RATE;
+
+    // Pierwsza rura pojawia się szybciej
+    spawnTimer = currentSpawnRate * 0.6;
+
+    // BUG FIX: pełny reset kolekcji – Set zamiast Array
+    collectedIndices = new Set();
+    phraseCompleted  = false;
+
+    // Reset modalu
+    scoreModal.classList.remove('visible');
+    btnSubmit.innerText = 'ZAPISZ WYNIK';
+    btnSubmit.disabled  = false;
+    playerNameInput.value = '';
+    playerNameInput.classList.remove('error');
+
+    gameState = 'START';
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  TŁO I ŚRODOWISKO
+// ═════════════════════════════════════════════════════════════════
+function drawBackground() {
+    ctx.fillStyle = C_ORANGE;
+    ctx.fillRect(0, 0, CW, CH);
+
+    if (bgImg.complete && bgImg.naturalWidth !== 0) {
+        const bgW = CW * 2;
+        ctx.drawImage(bgImg, bgX,       0, bgW, CH);
+        ctx.drawImage(bgImg, bgX + bgW, 0, bgW, CH);
+        if (gameState === 'PLAYING' || gameState === 'TRANSITION') {
+            bgX -= currentObstacleSpeed * 0.2 * dt;
+            if (bgX <= -bgW) bgX = 0;
+        }
+    }
+}
+
+function drawVignette() {
+    const g = ctx.createLinearGradient(0, 0, 0, FLOOR_Y);
+    g.addColorStop(0,   'rgba(8,8,10,0.12)');
+    g.addColorStop(0.7, 'rgba(8,8,10,0)');
+    g.addColorStop(1,   'rgba(8,8,10,0.88)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, CW, FLOOR_Y);
+}
+
+function drawFloor() {
+    ctx.fillStyle = C_DARK;
+    ctx.fillRect(0, FLOOR_Y, CW, 40);
+
+    ctx.fillStyle = C_BEIGE;
+    ctx.fillRect(0, FLOOR_Y, CW, 3);
+
+    // Animowany wzór – BUG FIX: modulo zawsze dodatnie
+    ctx.fillStyle = '#15151a';
+    const tileW  = 40;
+    const offset = ((floorX % tileW) + tileW) % tileW;
+    for (let i = -1; i <= Math.ceil(CW / tileW) + 1; i++) {
+        ctx.fillRect(i * tileW + offset, FLOOR_Y + 10, tileW / 2, 20);
+    }
+
+    if (gameState === 'PLAYING' || gameState === 'TRANSITION') {
+        floorX -= currentObstacleSpeed * dt;
+    }
+}
+
+function drawPhraseOnFloor() {
+    const phrase      = TARGET_PHRASE;
+    const spacing     = 13;
+    const totalW      = (phrase.length - 1) * spacing;
+    const startX      = CW / 2 - totalW / 2;
+    const y           = CH - 20;
+
+    ctx.save();
+    ctx.font = 'bold 14px megascope-variable, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (let i = 0; i < phrase.length; i++) {
+        if (phrase[i] === ' ') continue;
+
+        if (phraseCompleted) {
+            const a = 0.6 + 0.4 * Math.abs(Math.sin(frames * 0.1));
+            ctx.fillStyle = `rgba(216,90,30,${a})`;
+        } else if (collectedIndices.has(i)) {
+            ctx.fillStyle = C_BEIGE;
+        } else {
+            ctx.fillStyle = '#2e2e2e';
+        }
+        ctx.fillText(phrase[i], startX + i * spacing, y);
+    }
+    ctx.restore();
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  HUD (gra w toku)
+// ═════════════════════════════════════════════════════════════════
+function drawHUD(alpha = 1) {
+    if (alpha <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Wynik
+    ctx.font = '900 68px megascope-variable, sans-serif';
+    ctx.lineWidth = 8;
+    ctx.strokeStyle = C_DARK;
+    ctx.strokeText(score, CW / 2, 80);
+    ctx.fillStyle = C_BEIGE;
+    ctx.fillText(score, CW / 2, 80);
+
+    // Pasek postępu hasła
+    const collected = collectedIndices.size;
+    const barW = 180, barH = 8;
+    const barX = CW / 2 - barW / 2;
+    const barY = 125;
+
+    ctx.fillStyle = 'rgba(8,8,10,0.55)';
+    ctx.fillRect(barX, barY, barW, barH);
+
+    if (phraseCompleted) {
+        const pulse = 0.5 + 0.5 * Math.sin(frames * 0.15);
+        ctx.fillStyle   = `rgba(216,90,30,${0.6 + pulse * 0.4})`;
+        ctx.shadowColor = C_ORANGE;
+        ctx.shadowBlur  = 10;
+    } else {
+        ctx.fillStyle = C_BEIGE;
+    }
+    ctx.fillRect(barX, barY, barW * (collected / PHRASE_LEN), barH);
+    ctx.shadowBlur = 0;
+
+    ctx.strokeStyle = C_BEIGE; ctx.lineWidth = 1.5;
+    ctx.strokeRect(barX, barY, barW, barH);
+
+    ctx.fillStyle = 'rgba(217,210,192,0.75)';
+    ctx.font = 'bold 12px megascope-variable, sans-serif';
+    ctx.fillText(`HASŁO: ${collected}/${PHRASE_LEN}`, CW / 2, barY + barH + 14);
+
+    // Tarcza aktywna
+    if (player && player.invincibilityTimer > 0) {
+        const sa = 0.5 + 0.5 * Math.sin(frames * 0.2);
+        ctx.fillStyle = `rgba(217,210,192,${sa})`;
+        ctx.font = 'bold 13px megascope-variable, sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText('⬡ TARCZA AKTYWNA', CW - 14, 25);
+    }
+
+    ctx.restore();
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  EKRAN STARTOWY
+// ═════════════════════════════════════════════════════════════════
+
+const titleImg = new Image();
+titleImg.src = 'assets/title.png';
+
+function drawStartScreen(fade = 1) {
+    if (fade <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = fade;
+
+    // Przyciemnienie tła
+    ctx.fillStyle = 'rgba(8,8,10,0.52)';
+    ctx.fillRect(0, 0, CW, CH);
+
+    const cx = CW / 2;
+
+    // ── Animowany tytuł (PNG) ─────────────────────────────────────
+    // 3 warstwy animacji nałożone na siebie:
+    //   1. breathY   – powolny pionowy oddech
+    //   2. tiltRot   – delikatne kołysanie lewo/prawo
+    //   3. scalePulse – subtelny puls skali
+
+    const breathY    = Math.sin(frames * 0.032) * 7;
+    const tiltRot    = Math.sin(frames * 0.021) * 0.024;
+    const scalePulse = 1 + Math.sin(frames * 0.055) * 0.018;
+
+    const titleCY = 245;
+    const titleW  = 340;
+    const titleH  = (titleImg.complete && titleImg.naturalWidth !== 0)
+        ? titleW * (titleImg.naturalHeight / titleImg.naturalWidth)
+        : 180;
+
+    ctx.save();
+    ctx.translate(cx, titleCY + breathY);
+    ctx.rotate(tiltRot);
+    ctx.scale(scalePulse, scalePulse);
+
+    if (titleImg.complete && titleImg.naturalWidth !== 0) {
+        ctx.shadowColor = C_ORANGE;
+        ctx.shadowBlur  = 26 + Math.sin(frames * 0.055) * 10;
+        ctx.drawImage(titleImg, -titleW / 2, -titleH / 2, titleW, titleH);
+        ctx.shadowBlur  = 0;
+    } else {
+        // Fallback tekstowy gdy PNG jeszcze się nie wgrało
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.font = '900 74px megascope-variable, sans-serif';
+        ctx.lineWidth = 9; ctx.strokeStyle = C_DARK;
+        ctx.strokeText('FLAPPY', 0, -45);
+        ctx.fillStyle = C_BEIGE;
+        ctx.fillText('FLAPPY', 0, -45);
+        ctx.strokeText('BOGUŚ', 0, 40);
+        ctx.fillStyle = C_ORANGE;
+        ctx.fillText('BOGUŚ', 0, 40);
+        ctx.font = '900 52px megascope-variable, sans-serif'; ctx.lineWidth = 6;
+        ctx.strokeText('2', 105, 100);
+        ctx.fillStyle = C_BEIGE;
+        ctx.fillText('2', 105, 100);
+    }
+    ctx.restore();
+
+    // ── Pulsujące zaproszenie ─────────────────────────────────────
+    const ta = 0.4 + 0.6 * Math.abs(Math.sin(frames * 0.048));
+    ctx.fillStyle = `rgba(217,210,192,${ta})`;
+    ctx.font = 'bold 19px megascope-variable, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Dotknij by zacząć grać', cx, CH - 70);
+
+    ctx.restore();
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  KOLIZJE
+// ═════════════════════════════════════════════════════════════════
+function checkCollisions() {
+    if (player.invincibilityTimer > 0) return;
+
+    const mX = 13, mY = 10;
+    const pL = player.x - player.size / 2 + mX;
+    const pR = player.x + player.size / 2 - mX;
+    const pT = player.y - player.size / 2 + mY;
+    const pB = player.y + player.size / 2 - mY;
+
+    for (const obs of obstacles) {
+        if (pR > obs.x && pL < obs.x + PIPE_W) {
+            if (pT < obs.topHeight || pB > obs.bottomY) {
+                triggerGameOver();
+                return;
+            }
+        }
+    }
+}
+
+function checkPowerups() {
+    for (const p of powerups) {
+        if (p.markedForDeletion) continue;
+        const bobY = p.y + Math.sin(frames * 0.08 + p.bobOffset) * 6;
+        const hit  =
+            player.x + player.size / 2 > p.x - p.size / 2 &&
+            player.x - player.size / 2 < p.x + p.size / 2 &&
+            player.y + player.size / 2 > bobY - p.size / 2 &&
+            player.y - player.size / 2 < bobY + p.size / 2;
+
+        if (!hit) continue;
+        p.markedForDeletion = true;
+
+        if (p.type === 1) {
+            score += 5;
+            spawnParticles(p.x, bobY, C_BEIGE, 14);
+        } else if (p.type === 2) {
+            player.invincibilityTimer = 300;
+            spawnParticles(p.x, bobY, C_BEIGE, 20);
+        } else if (p.type === 3) {
+            if (!collectedIndices.has(p.letterIndex)) {
+                collectedIndices.add(p.letterIndex);
+                score += 2;
+                spawnParticles(p.x, bobY, C_ORANGE, 18, true);
+                letterCollectAnims.push({
+                    letter: p.letter,
+                    x: player.x, y: player.y - 32,
+                    alpha: 1, vy: -2
+                });
+
+                // BUG FIX: Set.size vs PHRASE_LEN (unikalne litery)
+                if (collectedIndices.size >= PHRASE_LEN && !phraseCompleted) {
+                    phraseCompleted = true;
+                    score += 50;
+                    spawnParticles(CW / 2, CH / 2, C_ORANGE, 70, true);
+                }
+            } else {
+                spawnParticles(p.x, bobY, C_GRAY, 5);
+            }
+        }
+    }
+}
+
+function maybeSpawnPowerup(obs) {
+    if (Math.random() > 0.6) return;
+
+    const powerupY  = obs.topHeight + currentGapSize / 2;
+    const available = [];
+    for (let i = 0; i < TARGET_PHRASE.length; i++) {
+        if (TARGET_PHRASE[i] !== ' ' && !collectedIndices.has(i)) available.push(i);
+    }
+
+    if (available.length > 0 && Math.random() > 0.4) {
+        const idx = available[Math.floor(Math.random() * available.length)];
+        powerups.push(new Powerup(CW + PIPE_W / 2, powerupY, 3, TARGET_PHRASE[idx], idx));
+    } else {
+        powerups.push(new Powerup(CW + PIPE_W / 2, powerupY, Math.random() > 0.7 ? 2 : 1));
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  GAME OVER
+// ═════════════════════════════════════════════════════════════════
+function triggerGameOver() {
+    if (gameState === 'GAMEOVER') return;
+    gameState    = 'GAMEOVER';
+    gameOverTime = Date.now();
+    player.isDead = true;
+
+    if (score > highScore) highScore = score;
+    spawnParticles(player.x, player.y, C_ORANGE, 35, true);
+
+    setTimeout(() => {
+        if (gameState !== 'GAMEOVER') return; // anuluj jeśli gracz zdążył zrestartować
+        if (score > 0) {
+            finalScoreText.innerText = score;
+            scoreModal.classList.add('visible');
+            playerNameInput.focus();
+        }
+    }, 1000);
+}
+
+function submitScore() {
+    const name = playerNameInput.value.trim();
+    if (!name) {
+        playerNameInput.classList.add('error');
+        playerNameInput.focus();
+        return;
+    }
+    if (isSubmittingScore) return;
+
+    isSubmittingScore = true;
+    btnSubmit.innerText = 'Wysyłanie...';
+    btnSubmit.disabled  = true;
+    playerNameInput.classList.remove('error');
+
+    supaPostScore(name, score)
+    .then(() => {
+        btnSubmit.innerText = '✓ ZAPISANO!';
+        setTimeout(() => resetFromModal(), 1000);
+    })
+    .catch(() => {
+        btnSubmit.innerText = 'BŁĄD – SPRÓBUJ PONOWNIE';
+        btnSubmit.disabled  = false;
+        isSubmittingScore   = false;
+    });
+}
+
+function resetFromModal() {
+    scoreModal.classList.remove('visible');
+    initGame();
+}
+
+btnSubmit.addEventListener('click', submitScore);
+btnSkip.addEventListener('click', resetFromModal);
+playerNameInput.addEventListener('keypress', e => { if (e.key === 'Enter') submitScore(); });
+playerNameInput.addEventListener('input', () => playerNameInput.classList.remove('error'));
+
+// ═════════════════════════════════════════════════════════════════
+//  GŁÓWNA PĘTLA
+// ═════════════════════════════════════════════════════════════════
+function loop(timestamp) {
+    if (!lastTimestamp) lastTimestamp = timestamp;
+    let delta = timestamp - lastTimestamp;
+    lastTimestamp = timestamp;
+    if (delta > 100) delta = 100;   // tab był uśpiony
+    dt = delta / (1000 / 60);       // dt=1 przy 60fps
+
+    ctx.clearRect(0, 0, CW, CH);
+    drawBackground();
+
+    // ── START ─────────────────────────────────────────────────────
+    if (gameState === 'START') {
+        player.driftUpdate();           // sinusoidalny dryf, brak grawitacji
+
+        drawVignette();
+        drawFloor();
+        drawPhraseOnFloor();
+        player.draw();
+        drawStartScreen(1);
+
+    // ── TRANSITION ────────────────────────────────────────────────
+    } else if (gameState === 'TRANSITION') {
+        player.update();
+        transitionTimer += dt;
+
+        const progress = Math.min(1, transitionTimer / TRANSITION_FRAMES);
+        const ease     = 1 - Math.pow(1 - progress, 3); // easeOutCubic
+
+        // Gracz "wlatuje" ze środka na lewą pozycję
+        player.x = player.startX + (80 - player.startX) * ease;
+
+        updateParticles();
+        updateLetterAnims();
+
+        drawVignette();
+        drawStartScreen(1 - progress);
+        drawParticles();
+        player.draw();
+        drawLetterAnims();
+        drawFloor();
+        drawPhraseOnFloor();
+        drawHUD(progress);
+
+        if (progress >= 1) {
+            player.x  = 80;
+            gameState = 'PLAYING';
+        }
+
+    // ── PLAYING ───────────────────────────────────────────────────
+    } else if (gameState === 'PLAYING') {
+        player.update();
+
+        spawnTimer += dt;
+        if (spawnTimer >= currentSpawnRate) {
+            spawnTimer -= currentSpawnRate;
+            const obs = new Obstacle();
+            obstacles.push(obs);
+            maybeSpawnPowerup(obs);
+        }
+
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+            obstacles[i].update();
+            obstacles[i].draw();
+            if (obstacles[i].x + PIPE_W < 0) obstacles.splice(i, 1);
+        }
+        for (let i = powerups.length - 1; i >= 0; i--) {
+            powerups[i].update();
+            powerups[i].draw();
+            if (powerups[i].x + powerups[i].size < 0 || powerups[i].markedForDeletion) powerups.splice(i, 1);
+        }
+
+        checkCollisions();
+        checkPowerups();
+        updateParticles();
+        updateLetterAnims();
+
+        drawVignette();
+        drawParticles();
+        player.draw();
+        drawLetterAnims();
+        drawFloor();
+        drawPhraseOnFloor();
+        drawHUD(1);
+
+    // ── GAMEOVER ──────────────────────────────────────────────────
+    } else if (gameState === 'GAMEOVER') {
+        obstacles.forEach(o => o.draw());
+        powerups.forEach(p => p.draw());
+
+        updateParticles();
+        drawVignette();
+        drawParticles();
+        player.draw();
+        drawFloor();
+        drawPhraseOnFloor();
+
+        ctx.fillStyle = 'rgba(8,8,10,0.82)';
+        ctx.fillRect(0, 0, CW, CH);
+
+        // Wynik widoczny przed pojawieniem się modalu
+        if (!scoreModal.classList.contains('visible')) {
+            ctx.textAlign    = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillStyle = C_BEIGE;
+            ctx.font = 'bold 16px megascope-variable, sans-serif';
+            ctx.fillText('WYNIK', CW / 2, CH / 2 - 32);
+            ctx.font = '900 72px megascope-variable, sans-serif';
+            ctx.lineWidth = 8;
+            ctx.strokeStyle = C_DARK;
+            ctx.strokeText(score, CW / 2, CH / 2 + 22);
+            ctx.fillText(score, CW / 2, CH / 2 + 22);
+
+            if (highScore > 0 && score >= highScore) {
+                const ra = 0.6 + 0.4 * Math.abs(Math.sin(frames * 0.1));
+                ctx.fillStyle = `rgba(216,90,30,${ra})`;
+                ctx.font = 'bold 15px megascope-variable, sans-serif';
+                ctx.fillText('★ NOWY REKORD ★', CW / 2, CH / 2 + 72);
+            } else if (highScore > 0) {
+                ctx.fillStyle = 'rgba(176,176,176,0.7)';
+                ctx.font = 'bold 14px megascope-variable, sans-serif';
+                ctx.fillText(`REKORD: ${highScore}`, CW / 2, CH / 2 + 72);
+            }
+
+            if (score === 0) {
+                const ta = 0.4 + 0.6 * Math.abs(Math.sin(frames * 0.05));
+                ctx.fillStyle = `rgba(217,210,192,${ta})`;
+                ctx.font = 'bold 17px megascope-variable, sans-serif';
+                ctx.fillText('Dotknij by spróbować ponownie', CW / 2, CH / 2 + 110);
+            }
+        }
+    }
+
+    frames += dt;
+    requestAnimationFrame(loop);
+}
+
+// ═════════════════════════════════════════════════════════════════
+//  INPUT
+// ═════════════════════════════════════════════════════════════════
+let lastInputTime = 0;
+
+function handleInput(e) {
+    if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+    if (e.type === 'keydown' && e.code !== 'Space') return;
+    if (e.type === 'keydown' && e.repeat) return;
+    if (e.type === 'keydown' || e.type === 'touchstart') e.preventDefault();
+
+    const now = Date.now();
+    if (now - lastInputTime < 50) return;
+    lastInputTime = now;
+
+    if (gameState === 'START') {
+        gameState       = 'TRANSITION';
+        transitionTimer = 0;
+        player.startX   = player.x;
+        player.velocity = 0;
+        player.jump();
+    } else if (gameState === 'PLAYING' || gameState === 'TRANSITION') {
+        player.jump();
+    } else if (gameState === 'GAMEOVER') {
+        if (!scoreModal.classList.contains('visible') && Date.now() - gameOverTime > 900) {
+            initGame();
+        }
+    }
+}
+
+window.addEventListener('keydown', handleInput);
+canvas.addEventListener('mousedown', handleInput);
+canvas.addEventListener('touchstart', handleInput, { passive: false });
+
+// ─── Start ────────────────────────────────────────────────────────
+initGame();
+document.fonts.ready.then(() => {
+    requestAnimationFrame(loop);
+});
+</script>
+</body>
+</html>
