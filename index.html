@@ -561,6 +561,14 @@ function showActOverlay(act) {
     actOverlayEl.classList.remove('show');
     void actOverlayEl.offsetWidth; // reflow wymusza restart animacji
     actOverlayEl.classList.add('show');
+    
+    // Zatrzymanie gry na czas wyświetlania overlayu (około 1.8 sekundy)
+    if (gameState === 'PLAYING' || gameState === 'TRANSITION') {
+        stateBeforePause = gameState;
+        gameState = 'ACT_PAUSE';
+        actPauseTimer = 110; // ok. 1.8 sekundy przy 60fps
+        player.velocity = 0; // resetujemy prędkość opadania, by gracz nie zginął na wejściu
+    }
 }
 
 // ─── Personal Best (localStorage) ────────────────────────────────
@@ -580,7 +588,6 @@ function computeRank(myScore) {
     return better + 1;
 }
 
-
 const TARGET_PHRASE = "KALISKIE SPOTKANIA TEATRALNE";
 const PHRASE_LEN    = TARGET_PHRASE.replace(/\s/g, '').length;
 
@@ -597,6 +604,9 @@ let transitionTimer;
 let spawnTimer;
 let gameOverTime;
 let isSubmittingScore;
+
+let actPauseTimer = 0;
+let stateBeforePause = 'PLAYING';
 
 let currentObstacleSpeed;
 let currentGapSize;
@@ -912,6 +922,7 @@ function initGame() {
     transitionTimer   = 0;
     gameOverTime      = 0;
     isSubmittingScore = false;
+    actPauseTimer     = 0;
 
     currentObstacleSpeed = BASE_SPEED;
     currentGapSize       = BASE_GAP;
@@ -1388,6 +1399,35 @@ function loop(timestamp) {
         drawPhraseOnFloor();
         drawHUD(1);
 
+    // ── ACT PAUSE (Pauza na animację aktu) ────────────────────────
+    } else if (gameState === 'ACT_PAUSE') {
+        actPauseTimer -= dt;
+
+        updateParticles();
+        updateLetterAnims();
+
+        obstacles.forEach(o => o.draw());
+        powerups.forEach(p => p.draw());
+
+        drawVignette();
+
+        let hudAlpha = 1;
+        if (stateBeforePause === 'TRANSITION') {
+            hudAlpha = Math.min(1, transitionTimer / TRANSITION_FRAMES);
+            drawStartScreen(1 - hudAlpha);
+        }
+
+        drawParticles();
+        player.draw();
+        drawLetterAnims();
+        drawFloor();
+        drawPhraseOnFloor();
+        drawHUD(hudAlpha);
+
+        if (actPauseTimer <= 0) {
+            gameState = stateBeforePause;
+        }
+
     // ── GAMEOVER ──────────────────────────────────────────────────
     } else if (gameState === 'GAMEOVER') {
         obstacles.forEach(o => o.draw());
@@ -1461,7 +1501,8 @@ function handleInput(e) {
         player.velocity = 0;
         player.jump();
         showActOverlay(ACTS[0]);
-    } else if (gameState === 'PLAYING' || gameState === 'TRANSITION') {
+    } else if (gameState === 'PLAYING' || gameState === 'TRANSITION' || gameState === 'ACT_PAUSE') {
+        // Dopuszczamy podskok nawet w trakcie pauzy – uchroni to przed natychmiastowym upadkiem
         player.jump();
     } else if (gameState === 'GAMEOVER') {
         if (!scoreModal.classList.contains('visible') && Date.now() - gameOverTime > 900) {
